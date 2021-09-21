@@ -1,0 +1,420 @@
+---
+title: "Rapport_actuariel"
+author: "Hendrick"
+date: "07/09/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+#Installer and chager les packages
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+Install_And_Load <- function(packages) {
+  k <- packages[!(packages %in% installed.packages()[,"Package"])];
+  if(length(k))
+  {install.packages(k, repos='https://cran.rstudio.com/',dep=T);}
+  
+  for(package_name in packages)
+  {library(package_name,character.only=TRUE, quietly = TRUE);}
+}
+list_packages=c('ade4','openxlsx','tidyverse','dplyr','ggplot2','rio','readxl','lubridate')
+Install_And_Load(list_packages)
+```
+
+
+#Executer bibliotheques de fonctions
+
+```{r echo=TRUE}
+
+source('Bibliotheques_Fonctions_22102018.R', encoding = "UTF-8")
+
+```
+
+#definir le repertoire des tables
+
+```{r echo=TRUE}
+
+dir='C:/Users/hendricks.tenin/Desktop/Actuariat'
+setwd(dir)
+```
+
+
+#Importer les tables
+
+```{r echo=TRUE}
+
+tb_prime=read.csv2('Données Sinistres et CA/CA_2016_2021.csv')
+
+tb_prime=data.frame(rbind(
+  read_excel("Données Sinistres et CA/CA_312021.xlsx",sheet=1),
+  read_excel("Données Sinistres et CA/CA_312021.xlsx",sheet=2),
+  read_excel("Données Sinistres et CA/CA_312021.xlsx",sheet=3),
+  read_excel("Données Sinistres et CA/CA_312021.xlsx",sheet=4),
+  read_excel("Données Sinistres et CA/CA_312021.xlsx",sheet=5)))
+
+
+
+tb_sinistre=data.frame(rbind(
+  read_excel("Données Sinistres et CA/Sinistre_312020.xlsx",sheet=1),
+  read_excel("Données Sinistres et CA/Sinistre_312020.xlsx",sheet=2),
+  read_excel("Données Sinistres et CA/Sinistre_312020.xlsx",sheet=3)))
+
+tb_sinistre=read.csv2('Données Sinistres et CA/CHARGE_SINISTRE_082021.csv')
+
+
+tb_branche=read.csv2('tb_branche.csv')
+
+head(tb_prime)
+head(tb_sinistre)
+
+```
+
+
+#creation de numero unique de police et de sinistre
+
+```{r echo=TRUE}
+tb_prime$NUM_POLICE <- paste0(tb_prime$Code.Interm,tb_prime$Police)
+
+tb_sinistre$NUM_POLICE=paste0(tb_sinistre$Inter,tb_sinistre$Police)
+tb_sinistre$NUM_SINISTRE <- paste0(tb_sinistre$Annee,tb_sinistre$Inter,tb_sinistre$Num.Sinistre)
+
+#date vision
+
+tb_sinistre$deal_date=as.Date('2021-08-31',"%Y-%m-%d") #date de vision des sinistre
+```
+
+
+
+#Table Branche
+
+```{r echo=TRUE}
+head(tb_branche)
+```
+
+
+#Traitement des tables
+
+```{r echo=TRUE}
+
+tb_prime$BRANCHE1=tb_branche$Libelle_branche1[match(tb_prime$LibelleBranche,tb_branche$Libelle.Branche_system)] #ajouter sur la table prime les noms des branches recodifiees level 1 
+
+
+tb_prime$BRANCHE2=tb_branche$Libelle_branche2[match(tb_prime$LibelleBranche,tb_branche$Libelle.Branche_system)] #ajouter sur la table prime les noms des branches recodifiees level 2
+
+tb_sinistre$BRANCHE1=tb_branche$Libelle_branche1[match(tb_sinistre$Branche,tb_branche$Code_branche)]#ajouter sur la table sinistre les noms des branches recodifiees level 1
+
+tb_sinistre$BRANCHE2=tb_branche$Libelle_branche2[match(tb_sinistre$Branche,tb_branche$Code_branche)] #ajouter sur la table sinistre les noms des branches recodifiees level 2
+
+tb_prime$Date_Effet=as.Date(tb_prime$Effet, "%d/%m/%Y") # mettre la date effet en format date
+tb_prime$Date_Fin=as.Date(tb_prime$Echeance, "%d/%m/%Y") # mettre la date echeance en format date
+
+tb_prime$pnette_coass=tb_prime$CA  # definir la prime nette de coassurance
+tb_prime$AnneePolice=Exposition(tb_prime$Date_Effet,tb_prime$Date_Fin) # calculer l'exposition des contrats en annee police
+
+```
+
+
+#Calculer la Prime acquise & la prec
+
+```{r echo=TRUE}
+
+by_variable=c("BRANCHE1","BRANCHE2","Libelle.Categorie") #lister les variables d'aggregation
+Vec_Variable=c('PrimeAcquise',"Prec","Acquisition","AcquisitionPrec") #lister les variables a aggreger
+
+date_end_acquisiion="31/12/2025" # definir de facon arbitraire
+
+#iniitialisation du process
+
+iAnnee=min(tb_prime$Annee) # obtenir la derniere annee demission
+
+tb_prime$Acquisition = AnneePoliceAcquisition(tb_prime$Date_Effet,tb_prime$Date_Fin,paste0("01/01/",iAnnee),paste0("31/12/",iAnnee)) # periode acquis pour l annee d inventaire  iAnnee
+
+tb_prime$AcquisitionPrec=0  
+
+tb_prime[tb_prime$Annee==iAnnee,]$AcquisitionPrec= AnneePoliceAcquisition(tb_prime[tb_prime$Annee==iAnnee,]$Date_Effet,tb_prime[tb_prime$Annee==iAnnee,]$Date_Fin,paste0("01/01/",iAnnee+1),date_end_acquisiion) #reste periode a acquerir relativement a lexposition
+
+
+tb_prime$PrimeAcquise = tb_prime$pnette_coass *tb_prime$Acquisition/tb_prime$AnneePolice #calcul prime acquise
+tb_prime$Prec =(tb_prime$pnette_coass *tb_prime$AcquisitionPrec)/tb_prime$AnneePolice # calcul prec
+
+tb_Prime_Acq_Prec_Agg <-aggregate(tb_prime[,Vec_Variable],by=tb_prime[,by_variable], FUN = SumDouble, na.rm=TRUE)
+
+tb_Prime_Acq_Prec_Agg$AnneeAcquisition=iAnnee
+
+#Process de calcul pour l ensemble des periodes dinventaire
+
+n_end=max(tb_prime$Annee)
+n_start=iAnnee+1
+
+for(i in n_start:n_end) {
+
+tb_prime$Acquisition = AnneePoliceAcquisition(tb_prime$Date_Effet,tb_prime$Date_Fin,paste0("01/01/",iAnnee),paste0("31/12/",i))
+
+tb_prime$AcquisitionPrec=0
+
+tb_prime[tb_prime$Annee==i,]$AcquisitionPrec= AnneePoliceAcquisition(tb_prime[tb_prime$Annee==i,]$Date_Effet,tb_prime[tb_prime$Annee==i,]$Date_Fin,paste0("01/01/",i+1),date_end_acquisiion)
+
+
+tb_prime$PrimeAcquise = tb_prime$pnette_coass *tb_prime$Acquisition/tb_prime$AnneePolice
+tb_prime$Prec =(tb_prime$pnette_coass *tb_prime$AcquisitionPrec)/tb_prime$AnneePolice
+
+tb_primeTemp=aggregate(tb_prime[,Vec_Variable],by=tb_prime[,by_variable], FUN = SumDouble, na.rm=TRUE)
+
+tb_primeTemp$AnneeAcquisition=i
+tb_Prime_Acq_Prec_Agg = rbind(tb_Prime_Acq_Prec_Agg,tb_primeTemp)
+}
+
+head(tb_Prime_Acq_Prec_Agg)
+
+```
+
+#calculer la Prime acquise sans la prec
+
+
+```{r echo=TRUE}
+
+Vec_Variable = c("PrimeAcquise","NbrePolice","Acquisition") #lister les variables d'aggregation
+by_variable=c('Annee',"BRANCHE1","BRANCHE2","LibelleCategorie") #lister les variables a aggreger
+
+i_Annee=min(year(tb_prime$Date_Effet))  #obtenir le minimum des annees dacquisition
+#i_Annee=2018
+
+tb_prime$Acquisition = AnneePoliceAcquisition(tb_prime$Date_Effet,tb_prime$Date_Fin,paste0("01/01/",i_Annee),paste0("31/12/",i_Annee)) # periode acquis
+
+
+tb_prime$PrimeAcquise = tb_prime$pnette_coass *tb_prime$Acquisition/tb_prime$AnneePolice #Prime acquise
+tb_prime$count = (tb_prime$Acquisition>0) #TRUE OR FALSE
+tb_prime$NbrePolice=1*tb_prime$count #Nombre de contrat par annee police
+
+tb_Prime_Acq_Agg <-aggregate(tb_prime[,Vec_Variable],by=tb_prime[,by_variable], FUN = SumDouble, na.rm=TRUE)
+
+
+tb_Prime_Acq_Agg$AnneeAcquisition=i_Annee
+
+#Process de calcul pour l ensemble des periodes dacquisition
+
+n_start=i_Annee+1
+
+n_end=2030  
+ 
+for(i in n_start:n_end) {
+
+tb_prime$Acquisition = AnneePoliceAcquisition(tb_prime$Date_Effet,tb_prime$Date_Fin,paste0("01/01/",i),paste0("31/12/",i))
+
+tb_prime$PrimeAcquise = tb_prime$pnette_coass *tb_prime$Acquisition/tb_prime$AnneePolice
+tb_prime$count = (tb_prime$Acquisition>0)
+tb_prime$NbrePolice=1*tb_prime$count
+
+tb_primeTemp <-aggregate(tb_prime[,Vec_Variable],by=tb_prime[,by_variable], FUN = SumDouble, na.rm=TRUE)
+
+tb_primeTemp$AnneeAcquisition=i
+tb_Prime_Acq_Agg = rbind(tb_Prime_Acq_Agg,tb_primeTemp)
+
+}
+head(tb_Prime_Acq_Agg)
+```
+
+
+#Checking Prime pour savoir si toutes les primes emises correspondent aux primes acquises
+
+```{r echo=TRUE}
+tb_acq=tb_Prime_Acq_Agg%>%group_by(Annee,BRANCHE1,BRANCHE2,AnneeAcquisition)%>%summarise(Prime=sum(PrimeAcquise,na.rm = TRUE))
+tb_acq_emi=tb_acq %>% spread(AnneeAcquisition, Prime)
+tb_acq_emi$tot=apply(tb_acq_emi[,-(1:3)],1,sum,na.rm=TRUE)
+
+tb_emis=tb_prime%>%group_by(Annee,BRANCHE1,BRANCHE2)%>%summarise(Prime=sum(pnette_coass,na.rm = TRUE))
+
+tb_acq_emi=tb_acq_emi%>%left_join(tb_emis)
+tb_acq_emi$diff=tb_acq_emi$Prime-tb_acq_emi$tot
+
+tb_acq_emi=tb_acq_emi%>%group_by(Annee,BRANCHE1,BRANCHE2)%>%summarise(diff=sum(diff,na.rm = TRUE))
+
+tb_acq_emi$quality=ifelse(tb_acq_emi$diff>=1,"Poor data","Clean data")
+
+head(tb_acq_emi)
+```
+
+
+# traitement table sinistre
+
+```{r echo=TRUE}
+
+Seuil_Gravite= 100000000 #a definir
+
+#remplacer les NA par 0
+
+vec_num=c("Reglements.sinistres","Regl.sinistres.anterieur","Recours.encaisser","Recours.encaisser.anterieur","SAP.annee.en.cours","Recours.à.encaisser")
+
+for(i in 1:length(vec_num))
+{
+tb_sinistre[is.na(tb_sinistre[vec_num[i]]),vec_num[i]]=0
+}
+
+
+#cumul_recours
+tb_sinistre$cumul_recours=tb_sinistre$Recours.encaisser+tb_sinistre$Recours.encaisser.anterieur
+
+#cumul_paye
+tb_sinistre$cumul_paye=tb_sinistre$Reglements.sinistres+tb_sinistre$Regl.sinistres.anterieur
+
+#Charge
+tb_sinistre$Charge = tb_sinistre$cumul_paye + tb_sinistre$SAP.annee.en.cours
+
+#reglement_exercice_net
+tb_sinistre$reglement_exercice_net = tb_sinistre$Reglements.sinistres - tb_sinistre$Recours.encaisser
+
+#cumul_paye_net
+tb_sinistre$cumul_paye_net = tb_sinistre$cumul_paye - tb_sinistre$cumul_recours
+
+#provision_net
+tb_sinistre$provision_net = tb_sinistre$SAP.annee.en.cours - tb_sinistre$Recours.à.encaisser
+
+#Charge_net
+tb_sinistre$Charge_net = tb_sinistre$cumul_paye_net + tb_sinistre$provision_net
+
+tb_sinistre$an_surv=year(as.Date(tb_sinistre$Date.de.survenance,"%d/%m/%Y")) 
+tb_sinistre$an_Declaration=year(as.Date(tb_sinistre$Date.de.déclaration,"%d/%m/%Y")) 
+
+
+
+
+tb_sinistre$NbSin=1  #Pour le comptage du nombre sinistre
+
+by_variable=c('an_surv','BRANCHE1','BRANCHE2','Categorie')
+Vec_Variable = c("Charge","cumul_paye","Charge_net","cumul_paye_net","provision_net" ,"reglement_exercice_net", "NbSin")
+
+min_year_sinistre=min(tb_Prime_Acq_Agg$AnneeAcquisition)
+
+tb_sinistre_ref = tb_sinistre[tb_sinistre$an_surv>=min_year_sinistre,]
+
+tb_sinistre_grave = tb_sinistre_ref[tb_sinistre_ref$Charge_net>=Seuil_Gravite &tb_sinistre_ref$an_surv>=min_year_sinistre & tb_sinistre_ref$BRANCHE1!='SANTE',]
+
+tb_sinistre_attritionnel =  tb_sinistre_ref[(tb_sinistre_ref$Charge_net<Seuil_Gravite | tb_sinistre_ref$BRANCHE1=='SANTE') & tb_sinistre_ref$an_surv>=min_year_sinistre ,]
+
+
+
+tb_sinistre_agg=aggregate(tb_sinistre_ref[,Vec_Variable],by=tb_sinistre_ref[,by_variable], FUN = SumDouble, na.rm=TRUE)
+
+#sinistre attritionnels
+
+tb_sinistre_agg_attri=aggregate(tb_sinistre_attritionnel[,Vec_Variable],by=tb_sinistre_attritionnel[,by_variable], FUN = SumDouble, na.rm=TRUE)
+
+
+#sinistre grave
+tb_sinistre_agg_grave=aggregate(tb_sinistre_grave[,Vec_Variable],by=tb_sinistre_grave[,by_variable], FUN = SumDouble, na.rm=TRUE)
+
+```
+
+
+#Fusionner Prime et Sinistre
+
+```{r}
+Vec_Variable_p = c("PrimeAcquise","NbrePolice","Acquisition")
+Vec_Variable_s = c("Charge","cumul_paye","Charge_net","cumul_paye_net","provision_net" ,"reglement_exercice_net", "NbSin")
+by_variable_p=c("AnneeAcquisition","BRANCHE1","BRANCHE2","LibelleCategorie")
+by_variable_s=c('an_surv',"BRANCHE1","BRANCHE2","Categorie")
+
+
+tb_Prime_Acq_Agg_f=aggregate(tb_Prime_Acq_Agg[,Vec_Variable_p],by=tb_Prime_Acq_Agg[,by_variable_p], FUN = SumDouble, na.rm=TRUE)
+colnames(tb_Prime_Acq_Agg_f)[1]="Annee"
+
+tb_sinistre_agg_f=aggregate(tb_sinistre_agg[,Vec_Variable_s],by=tb_sinistre_agg[,by_variable_s], FUN = SumDouble, na.rm=TRUE)
+colnames(tb_sinistre_agg_f)[1]="Annee"
+colnames(tb_sinistre_agg_f)[4]="LibelleCategorie"
+
+
+#atritionnel
+tb_sinistre_agg_attri_f=aggregate(tb_sinistre_agg_attri[,Vec_Variable_s],by=tb_sinistre_agg_attri[,by_variable_s], FUN = SumDouble, na.rm=TRUE)
+colnames(tb_sinistre_agg_attri_f)[1]="Annee"
+colnames(tb_sinistre_agg_attri_f)[4]="LibelleCategorie"
+
+#grave
+tb_sinistre_agg_grave_f=aggregate(tb_sinistre_agg_grave[,Vec_Variable_s],by=tb_sinistre_agg_grave[,by_variable_s], FUN = SumDouble, na.rm=TRUE)
+colnames(tb_sinistre_agg_grave_f)[1]="Annee"
+colnames(tb_sinistre_agg_grave_f)[4]="LibelleCategorie"
+
+tb_sinistre_agg_grave_f=tb_sinistre_agg_grave_f%>%mutate(NbSin_grave=NbSin, Charge_net_grave=Charge_net)%>%select(Annee,BRANCHE1,BRANCHE2,LibelleCategorie,NbSin_grave,Charge_net_grave)
+
+tb_prime$Annee=year(tb_prime$DATEEMISSION)
+
+tb_emis=tb_prime%>%group_by(Annee,BRANCHE1,BRANCHE2,LibelleCategorie)%>%summarise(Prime=sum(pnette_coass,na.rm = TRUE))
+
+
+tb_sp=tb_Prime_Acq_Agg_f%>%full_join(tb_sinistre_agg_f)%>%full_join(tb_sinistre_agg_grave_f)%>%full_join(tb_emis)
+tb_sp_attri=tb_Prime_Acq_Agg_f%>%full_join(tb_sinistre_agg_attri_f)
+
+sum(tb_sinistre_agg_f$Charge_net)
+sum(tb_sp$Charge_net,na.rm = TRUE)
+sum(tb_sinistre_ref$Charge_net)
+
+```
+
+#table d analyse 
+```{r}
+head(tb_sp)
+
+head(tb_sp_attri)
+
+write.csv2(tb_sp,"tb_sp_20210831.csv",row.names = FALSE, dec=".")
+write.csv2(tb_sp_attri,"tb_sp_attri_20201231.csv",row.names = FALSE, dec=".")
+
+```
+
+#Resortir les anomalies
+
+
+
+
+
+
+# Comparaison Cadrage
+```{r echo=TRUE}
+colnames(tb_sp)
+
+tb_sp_branche=tb_sp%>%filter(Annee>=2016 & 2020>=Annee)%>%group_by(Annee,BRANCHE1)%>%summarise(
+  PrimeAcquise=sum(PrimeAcquise, na.rm = TRUE),
+  Charge_net=sum(Charge_net, na.rm = TRUE),
+   
+  NbrePolice=sum(NbrePolice, na.rm = TRUE),
+   Acquisition=sum(Acquisition, na.rm = TRUE),
+   Charge=sum(Charge, na.rm = TRUE),
+  
+   cumul_paye_net=sum(cumul_paye_net, na.rm = TRUE),
+   provision_net=sum(provision_net, na.rm = TRUE),
+   NbSin=sum(NbSin,na.rm = TRUE)
+)%>%mutate(sp=(Charge_net/PrimeAcquise)*100,
+           Cout_moyen=Charge_net/NbSin,
+           Prime_moyen=PrimeAcquise/Acquisition
+           )
+
+
+tb_sp_attri_branche=tb_sp_attri%>%filter(Annee>=2016 & 2020>=Annee)%>%group_by(Annee,BRANCHE1)%>%summarise(
+  PrimeAcquise=sum(PrimeAcquise, na.rm = TRUE),
+  Charge_net=sum(Charge_net, na.rm = TRUE),
+   
+  NbrePolice=sum(NbrePolice, na.rm = TRUE),
+   Acquisition=sum(Acquisition, na.rm = TRUE),
+   Charge=sum(Charge, na.rm = TRUE),
+  
+   cumul_paye_net=sum(cumul_paye_net, na.rm = TRUE),
+   provision_net=sum(provision_net, na.rm = TRUE),
+   NbSin=sum(NbSin,na.rm = TRUE)
+)%>%mutate(sp=(Charge_net/PrimeAcquise)*100,
+           Cout_moyen=Charge_net/NbSin,
+           Prime_moyen=PrimeAcquise/Acquisition
+           )
+
+write.csv2(tb_sp_branche,"tb_sp_branche_20201231.csv",row.names = FALSE, dec=".")
+
+
+```
+
+

@@ -1,0 +1,288 @@
+---
+title: "Evaluation IBNR sous R"
+author: "Hendrick"
+date: "13/09/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Install and load packages
+```{r}
+Install_And_Load <- function(packages) {
+  k <- packages[!(packages %in% installed.packages()[,"Package"])];
+  if(length(k))
+  {install.packages(k, repos='https://cran.rstudio.com/',dep=T);}
+  
+  for(package_name in packages)
+  {library(package_name,character.only=TRUE, quietly = TRUE);}
+}
+list_packages=c('readxl','ade4','openxlsx','tidyverse','dplyr','ggplot2','rio','readxl','lubridate')
+Install_And_Load(list_packages)
+```
+
+#define repository
+```{r}
+
+dir='C:/Users/hendricks.tenin/Desktop/Actuariat'
+setwd(dir)
+```
+
+#Import data
+```{r}
+tb_sinistre=data.frame(rbind(
+  read_excel("Données Sinistres et CA/Sinistre_312020.xlsx",sheet=1),
+  read_excel("Données Sinistres et CA/Sinistre_312020.xlsx",sheet=2),
+  read_excel("Données Sinistres et CA/Sinistre_312020.xlsx",sheet=3)))
+
+tb_ecretement=data.frame(
+  read_excel("Données Sinistres et CA/TB_ECRETEMENT.xlsx",sheet=1))
+```
+
+
+#creation unique claims number 
+
+```{r}
+
+tb_sinistre$NUM_POLICE=paste0(tb_sinistre$Inter,tb_sinistre$Police)
+tb_sinistre$NUM_SINISTRE <- paste0(tb_sinistre$Annee,tb_sinistre$Inter,tb_sinistre$Num.Sinistre)
+
+#date inventaire
+deal_date=as.Date('2020-12-31',"%Y-%m-%d")
+tb_sinistre$deal_date=as.Date('2020-12-31',"%Y-%m-%d")
+
+
+tb_sinistre$BRANCHE1=tb_branche$Libelle_branche1[match(tb_sinistre$Libelle.Branche,tb_branche$Libelle.Branche_system)]
+tb_sinistre$BRANCHE2=tb_branche$Libelle_branche2[match(tb_sinistre$Libelle.Branche,tb_branche$Libelle.Branche_system)]
+```
+
+
+#Select keys variables
+```{r}
+key_var=c("NUM_SINISTRE","NATUSORT","BRANCHE1", "BRANCHE2" ,"Date.de.survenance","Categorie", "Date.de.déclaration","Reglements.sinistres","Regl.sinistres.anterieur","Recours.encaisser","Recours.encaisser.anterieur","SAP.annee.en.cours","Recours.à.encaisser")
+
+tb_sinistre_ref=tb_sinistre[,key_var]
+```
+
+
+#Evaluation Cumul_paye,cumul_paye_net,SAP_net,charge et charge_net
+```{r}
+
+#remplacer les NA par 0
+
+vec_num=c("Reglements.sinistres","Regl.sinistres.anterieur","Recours.encaisser","Recours.encaisser.anterieur","SAP.annee.en.cours","Recours.à.encaisser")
+
+for(i in 1:length(vec_num))
+{
+tb_sinistre_ref[is.na(tb_sinistre_ref[vec_num[i]]),vec_num[i]]=0
+}
+
+
+#cumul_recours
+tb_sinistre_ref$cumul_recours=tb_sinistre_ref$Recours.encaisser+tb_sinistre_ref$Recours.encaisser.anterieur
+
+#cumul_paye
+tb_sinistre_ref$cumul_paye=tb_sinistre_ref$Reglements.sinistres+tb_sinistre_ref$Regl.sinistres.anterieur
+
+#Charge
+tb_sinistre_ref$Charge = tb_sinistre_ref$cumul_paye + tb_sinistre_ref$SAP.annee.en.cours
+
+#reglement_exercice_net
+tb_sinistre_ref$reglement_exercice_net = tb_sinistre_ref$Reglements.sinistres - tb_sinistre_ref$Recours.encaisser
+
+#cumul_paye_net
+tb_sinistre_ref$cumul_paye_net = tb_sinistre_ref$cumul_paye - tb_sinistre_ref$cumul_recours
+
+#provision_net
+tb_sinistre_ref$provision_net = tb_sinistre_ref$SAP.annee.en.cours - tb_sinistre_ref$Recours.à.encaisser
+
+#Charge_net
+tb_sinistre_ref$Charge_net = tb_sinistre_ref$cumul_paye_net + tb_sinistre_ref$provision_net
+```
+
+
+#Periode survenance & declaration
+
+```{r}
+#survenance
+
+tb_sinistre_ref$annee_survenance=year(tb_sinistre_ref$Date.de.survenance)
+
+tb_sinistre_ref$trimestre_survenance=paste0(year(tb_sinistre_ref$Date.de.survenance),quarter(tb_sinistre_ref$Date.de.survenance))
+
+tb_sinistre_ref$mois_survenance=paste0(year(tb_sinistre_ref$Date.de.survenance),month(tb_sinistre_ref$Date.de.survenance,
+                                      abbr = TRUE,label = TRUE))
+
+
+#declaration
+tb_sinistre_ref$annee_declar=year(tb_sinistre_ref$Date.de.déclaration)
+tb_sinistre_ref$trimestre_declar=paste0(year(tb_sinistre_ref$Date.de.déclaration),quarter(tb_sinistre_ref$Date.de.déclaration))
+
+tb_sinistre_ref$mois_declar=paste0(year(tb_sinistre_ref$Date.de.déclaration),month(tb_sinistre_ref$Date.de.déclaration,
+                                      abbr = TRUE,label = TRUE))
+
+
+```
+
+#Ecretement charge_net
+
+```{r}
+tb_sinistre_ref$valeur_ecrete=tb_ecretement$Seuil.Ecrêtement[match(tb_sinistre_ref$BRANCHE1,tb_ecretement$BRANCHE)]
+
+tb_sinistre_ref$Charge_net_ecrete=ifelse(tb_sinistre_ref$valeur_ecrete==0,tb_sinistre_ref$Charge_net,apply(tb_sinistre_ref[,c("valeur_ecrete","Charge_net")],1,min))
+
+
+```
+
+#Evaluation doublon
+```{r}
+tb_double=tb_sinistre_ref[duplicated(tb_sinistre_ref$NUM_SINISTRE),]
+```
+
+#Evaluation nb sinistre
+
+```{r}
+#annee
+tb_nb_year=tb_sinistre_ref%>%group_by(annee_survenance,BRANCHE1,Categorie)%>%summarise(
+  nb_sin=n(),
+  ct=sum(Charge_net)
+)%>%mutate(cm=ct/nb_sin)
+
+
+#trimestre
+tb_nb_trim=tb_sinistre_ref%>%group_by(trimestre_survenance,BRANCHE1,Categorie)%>%summarise(
+  nb_sin=n(),
+  ct=sum(Charge_net)
+)%>%mutate(cm=ct/nb_sin)
+
+#mois
+tb_nb_mois=tb_sinistre_ref%>%group_by(mois_survenance,BRANCHE1,Categorie)%>%summarise(
+  nb_sin=n(),
+  ct=sum(Charge_net)
+)%>%mutate(cm=ct/nb_sin)
+
+```
+
+
+#Select 10 last years
+```{r}
+max_y=year(deal_date)
+min_y=max_y-10+1
+
+tb_sinistre_ref_1=tb_sinistre_ref%>%filter(annee_survenance>=min_y & max_y>=annee_survenance)
+
+```
+
+
+
+#Triangle de dvp
+
+```{r}
+
+vec_branche=unique(tb_sinistre_ref_1$BRANCHE1)
+
+
+#-------- Creation du triangle par annee --------------{#}
+{
+tb_temp=tb_sinistre_ref_1%>%filter(BRANCHE1==vec_branche[1])
+
+tb_temp$dev=tb_temp$annee_declar-tb_temp$annee_survenance
+tb_temp$n=1
+
+
+
+ni =length(unique(tb_temp$annee_survenance)) #nombre d'années d'observations
+nj=max(tb_temp$dev)+1
+#nj = length(unique(tb_temp$annee_declar)) #nombres d'années de développement
+
+#initialisation
+
+Tri = matrix(rep(0,ni*(nj)),nrow = ni)
+Triangle = matrix(rep(0,ni*(nj)),nrow = ni)
+
+#boucle
+for (i in 1:ni){
+   for (j in 1:(nj))
+     {
+    Tri[i,j]= sum(tb_temp$n[which((tb_temp$dev==(j-1))&(tb_temp$annee_survenance==sort(unique(tb_temp$annee_survenance))[i]))])
+    }
+ }
+
+start=dim(Tri)[1]-dim(Tri)[2]+1
+for(i in 1:dim(Tri)[1])
+  {
+ Triangle[i,]=cumsum(Tri[i,])
+ if(i>start){Triangle[i,(dim(Tri)[1]-i+2):dim(Tri)[2]]=rep(0,length((dim(Tri)[1]-i+2):dim(Tri)[2]))
+ }
+ else
+  {Triangle[i,]=cumsum(Tri[i,])}
+}
+
+row.names(Triangle)=unique(tb_temp$annee_survenance)
+
+Triangle_all_branche=data.frame(branche=vec_branche[1], annee=row.names(Triangle),Triangle)
+
+
+
+
+for(b in 2:length(vec_branche)){
+
+tb_temp=tb_sinistre_ref_1%>%filter(BRANCHE1==vec_branche[b])
+
+tb_temp$dev=tb_temp$annee_declar-tb_temp$annee_survenance
+tb_temp$n=1
+
+#-------- Creation du triangle par annee --------------{#}
+
+ni =length(unique(tb_temp$annee_survenance)) #nombre d'années d'observations
+nj=max(tb_temp$dev)+1
+nj = length(unique(tb_temp$annee_declar)) #nombres d'années de développement
+
+#initialisation
+
+Tri = matrix(rep(0,ni*(nj)),nrow = ni)
+Triangle = matrix(rep(0,ni*(nj)),nrow = ni)
+
+#boucle
+for (i in 1:ni){
+   for (j in 1:(nj))
+     {
+    Tri[i,j]= sum(tb_temp$n[which((tb_temp$dev==(j-1))&(tb_temp$annee_survenance==sort(unique(tb_temp$annee_survenance))[i]))])
+    }
+ }
+
+start=dim(Tri)[1]-dim(Tri)[2]+1
+for(i in 1:dim(Tri)[1])
+  {
+ Triangle[i,]=cumsum(Tri[i,])
+ if(i>start){Triangle[i,(dim(Tri)[1]-i+2):dim(Tri)[2]]=rep(0,length((dim(Tri)[1]-i+2):dim(Tri)[2]))
+ }
+ else
+  {Triangle[i,]=cumsum(Tri[i,])}
+}
+
+row.names(Triangle)=unique(tb_temp$annee_survenance)
+
+temp=data.frame(branche=vec_branche[b], annee=row.names(Triangle),Triangle)
+
+Triangle_all_branche=bind_rows(Triangle_all_branche,temp)
+
+
+}
+write.csv2(Triangle_all_branche,paste0("triangle_annee_",deal_date,".csv"),row.names=FALSE)
+
+}
+
+#-------- Creation du triangle par trimestre --------------{#}
+
+
+
+#-------- Creation du triangle par mois --------------{#}
+
+
+
+```
+
+

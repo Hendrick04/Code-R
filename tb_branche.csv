@@ -1,0 +1,13 @@
+Code_branche;Libelle.Branche_system;Libelle_branche1;Libelle_branche2
+89;Assistance Au Voyage;ASSISTANCE;SANTE
+81;Assurance Santé;SANTE;SANTE
+4;Automobile;AUTO;AUTO
+2;Autres Dommages aux biens;DAB;RE
+3;Incendie;INCENDIE;RE
+82;Individuelle Accidents;IA;RE
+7;Responsabilité Civile Générale;RC;RE
+1;Risques Techniques;RT;RE
+51;Transport Corps;TRANSPORT;RE
+53;Transport Facultés Aériennes;TRANSPORT;RE
+54;Transport Facultés Maritimes;TRANSPORT;RE
+52;Transport Facultés Terrestres;TRANSPORT;RE
